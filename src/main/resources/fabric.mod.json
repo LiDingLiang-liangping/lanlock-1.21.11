@@ -1,29 +1,22 @@
 {
 	"schemaVersion": 1,
 	"id": "lanlock",
-	"version": "${version}",
+	"version": "2.0.0",
 	"name": "LanLock",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "局域网联机保护：房主独享创造模式，访客需密码验证，禁用/give指令",
 	"authors": [
-		"Me!"
+		"liangping"
 	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
-	"license": "CC0-1.0",
-	"icon": "assets/lanlock/icon.png",
-	"environment": "*",
+	"contact": {},
+	"license": "MIT",
+	"environment": "server",
 	"entrypoints": {
-		"main": [
+		"server": [
 			"liangping.lanlock.LanLock"
 		]
 	},
-	"mixins": [
-		"lanlock.mixins.json"
-	],
 	"depends": {
-		"fabricloader": ">=0.19.3",
+		"fabricloader": ">=0.16.0",
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*"
