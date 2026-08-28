@@ -1,30 +1,237 @@
 package liangping.lanlock;
 
-import net.fabricmc.api.ModInitializer;
-
-import net.minecraft.resources.Identifier;
-
+import net.fabricmc.api.DedicatedServerModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.PacketSender;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.arguments.IntegerArgument;
+import net.minecraft.commands.arguments.item.ItemArgument;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.world.level.GameType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class LanLock implements ModInitializer {
-	public static final String MOD_ID = "lanlock";
+import java.util.*;
 
-	// This logger is used to write text to the console and the log file.
-	// It is considered best practice to use your mod id as the logger's name.
-	// That way, it's clear which mod wrote info, warnings, and errors.
-	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+public class LanLock implements DedicatedServerModInitializer {
+    public static final String MOD_ID = "lanlock";
+    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    
+    private PasswordManager passwordManager;
+    private final Map<UUID, AuthState> authStates = new HashMap<>();
+    private final Set<UUID> authenticatedPlayers = new HashSet<>();
+    private final Set<UUID> warnedPlayers = new HashSet<>();
+    private UUID hostPlayerUuid = null;
+    
+    private enum AuthState {
+        WAITING_REGISTER,
+        WAITING_LOGIN,
+        AUTHENTICATED
+    }
 
-	@Override
-	public void onInitialize() {
-		// This code runs as soon as Minecraft is in a mod-load-ready state.
-		// However, some things (like resources) may still be uninitialized.
-		// Proceed with mild caution.
-
-		LOGGER.info("Hello Fabric world!");
-	}
-
-	public static Identifier id(String path) {
-		return Identifier.fromNamespaceAndPath(MOD_ID, path);
-	}
+    @Override
+    public void onInitializeServer() {
+        LOGGER.info("[{}] v2.0 模组已加载", MOD_ID);
+        
+        ServerPlayConnectionEvents.JOIN.register(this::onPlayerJoin);
+        ServerPlayConnectionEvents.DISCONNECT.register(this::onPlayerDisconnect);
+        ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
+        registerCommands();
+        
+        LOGGER.info("[{}] 初始化完成", MOD_ID);
+    }
+    
+    private void onPlayerJoin(ServerGamePacketListenerImpl handler, PacketSender sender, MinecraftServer server) {
+        ServerPlayer player = handler.getPlayer();
+        UUID uuid = player.getUUID();
+        
+        if (hostPlayerUuid == null && isLocalHost(player)) {
+            hostPlayerUuid = uuid;
+            LOGGER.info("检测到房主: {}", player.getName().getString());
+        }
+        
+        if (uuid.equals(hostPlayerUuid)) {
+            authenticatedPlayers.add(uuid);
+            authStates.put(uuid, AuthState.AUTHENTICATED);
+            player.sendSystemMessage(Component.literal("§a[系统] 房主身份已确认，无需密码验证"));
+            return;
+        }
+        
+        if (passwordManager == null) {
+            passwordManager = new PasswordManager(server);
+        }
+        
+        if (passwordManager.isRegistered(uuid)) {
+            authStates.put(uuid, AuthState.WAITING_LOGIN);
+            player.sendSystemMessage(Component.literal("§e[系统] 请输入密码登录，使用 /login <密码>"));
+        } else {
+            authStates.put(uuid, AuthState.WAITING_REGISTER);
+            player.sendSystemMessage(Component.literal("§e[系统] 首次加入，请设置密码：/register <密码> <确认密码>"));
+        }
+    }
+    
+    private void onPlayerDisconnect(ServerGamePacketListenerImpl handler, MinecraftServer server) {
+        UUID uuid = handler.getPlayer().getUUID();
+        authStates.remove(uuid);
+        authenticatedPlayers.remove(uuid);
+        warnedPlayers.remove(uuid);
+        if (uuid.equals(hostPlayerUuid)) {
+            hostPlayerUuid = null;
+        }
+    }
+    
+    private void onServerTick(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            UUID uuid = player.getUUID();
+            AuthState state = authStates.getOrDefault(uuid, AuthState.AUTHENTICATED);
+            
+            if (state != AuthState.AUTHENTICATED && !uuid.equals(hostPlayerUuid)) {
+                player.setDeltaMovement(0, 0, 0);
+                if (server.getTickCount() % 40 == 0) {
+                    if (state == AuthState.WAITING_REGISTER) {
+                        player.sendSystemMessage(Component.literal("§c[系统] 请先注册：/register <密码> <确认密码>"));
+                    } else if (state == AuthState.WAITING_LOGIN) {
+                        player.sendSystemMessage(Component.literal("§c[系统] 请先登录：/login <密码>"));
+                    }
+                }
+            }
+            
+            if (uuid.equals(hostPlayerUuid)) continue;
+            
+            if (player.gameMode.getGameModeForPlayer() == GameType.CREATIVE) {
+                player.setGameMode(GameType.SURVIVAL);
+                if (!warnedPlayers.contains(uuid)) {
+                    player.sendSystemMessage(Component.literal("§c[系统] 创造模式已被禁用，已自动切换为生存模式！"));
+                    warnedPlayers.add(uuid);
+                    LOGGER.info("玩家 {} 尝试进入创造模式，已被强制切回生存", player.getName().getString());
+                }
+            }
+        }
+    }
+    
+    private void registerCommands() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            
+            dispatcher.register(Commands.literal("register")
+                .executes(context -> {
+                    context.getSource().sendFailure(Component.literal("§c用法: /register <密码> <确认密码>"));
+                    return 0;
+                })
+                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgument.word())
+                    .then(Commands.argument("confirm", net.minecraft.commands.arguments.StringArgument.word())
+                        .executes(context -> {
+                            ServerPlayer player = context.getSource().getPlayer();
+                            if (player == null) return 0;
+                            UUID uuid = player.getUUID();
+                            String pass = net.minecraft.commands.arguments.StringArgument.getString(context, "password");
+                            String confirm = net.minecraft.commands.arguments.StringArgument.getString(context, "confirm");
+                            
+                            if (authStates.get(uuid) != AuthState.WAITING_REGISTER) {
+                                player.sendSystemMessage(Component.literal("§c[系统] 你已经注册过了，请使用 /login 登录"));
+                                return 0;
+                            }
+                            if (!pass.equals(confirm)) {
+                                player.sendSystemMessage(Component.literal("§c[系统] 两次输入的密码不一致！"));
+                                return 0;
+                            }
+                            if (pass.length() < 4) {
+                                player.sendSystemMessage(Component.literal("§c[系统] 密码长度至少4位！"));
+                                return 0;
+                            }
+                            
+                            passwordManager.register(uuid, pass);
+                            authStates.put(uuid, AuthState.AUTHENTICATED);
+                            authenticatedPlayers.add(uuid);
+                            player.sendSystemMessage(Component.literal("§a[系统] 注册成功！欢迎加入！"));
+                            LOGGER.info("玩家 {} 注册成功", player.getName().getString());
+                            return 1;
+                        })
+                    )
+                )
+            );
+            
+            dispatcher.register(Commands.literal("login")
+                .executes(context -> {
+                    context.getSource().sendFailure(Component.literal("§c用法: /login <密码>"));
+                    return 0;
+                })
+                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgument.word())
+                    .executes(context -> {
+                        ServerPlayer player = context.getSource().getPlayer();
+                        if (player == null) return 0;
+                        UUID uuid = player.getUUID();
+                        String pass = net.minecraft.commands.arguments.StringArgument.getString(context, "password");
+                        
+                        if (authStates.get(uuid) != AuthState.WAITING_LOGIN) {
+                            player.sendSystemMessage(Component.literal("§c[系统] 你不需要登录"));
+                            return 0;
+                        }
+                        if (passwordManager.verifyPassword(uuid, pass)) {
+                            authStates.put(uuid, AuthState.AUTHENTICATED);
+                            authenticatedPlayers.add(uuid);
+                            player.sendSystemMessage(Component.literal("§a[系统] 登录成功！欢迎回来！"));
+                            LOGGER.info("玩家 {} 登录成功", player.getName().getString());
+                            return 1;
+                        } else {
+                            player.sendSystemMessage(Component.literal("§c[系统] 密码错误！请重试"));
+                            return 0;
+                        }
+                    })
+                )
+            );
+            
+            dispatcher.register(Commands.literal("give")
+                .executes(context -> {
+                    context.getSource().sendFailure(Component.literal("§c[系统] /give 指令已被禁用！"));
+                    return 0;
+                })
+                .then(Commands.argument("targets", EntityArgument.players())
+                    .then(Commands.argument("item", ItemArgument.item(registryAccess))
+                        .executes(context -> {
+                            context.getSource().sendFailure(Component.literal("§c[系统] /give 指令已被禁用！"));
+                            return 0;
+                        })
+                        .then(Commands.argument("count", IntegerArgument.integer(1))
+                            .executes(context -> {
+                                context.getSource().sendFailure(Component.literal("§c[系统] /give 指令已被禁用！"));
+                                return 0;
+                            })
+                        )
+                    )
+                )
+            );
+            
+            dispatcher.register(Commands.literal("gamemode")
+                .then(Commands.literal("creative")
+                    .executes(context -> {
+                        ServerPlayer player = context.getSource().getPlayer();
+                        if (player != null && player.getUUID().equals(hostPlayerUuid)) {
+                            player.setGameMode(GameType.CREATIVE);
+                            player.sendSystemMessage(Component.literal("§a[系统] 房主身份，创造模式已切换"));
+                            return 1;
+                        }
+                        context.getSource().sendFailure(Component.literal("§c[系统] 创造模式已被禁用！"));
+                        return 0;
+                    })
+                )
+                .then(Commands.literal("1")
+                    .executes(context -> {
+                        context.getSource().sendFailure(Component.literal("§c[系统] 创造模式已被禁用！"));
+                        return 0;
+                    })
+                )
+            );
+        });
+    }
+    
+    private boolean isLocalHost(ServerPlayer player) {
+        String ip = player.getIpAddress();
+        return ip.equals("127.0.0.1") || ip.equals("localhost") || ip.startsWith("192.168.") || ip.startsWith("10.");
+    }
 }
