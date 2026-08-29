@@ -1,5 +1,7 @@
 package liangping.lanlock;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -7,7 +9,6 @@ import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.commands.arguments.IntegerArgumentType;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -146,14 +147,14 @@ public class LanLock implements ModInitializer {
                     context.getSource().sendFailure(Component.literal("§c用法: /register <密码> <确认密码>"));
                     return 0;
                 })
-                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgumentType.word())
-                    .then(Commands.argument("confirm", net.minecraft.commands.arguments.StringArgumentType.word())
+                .then(Commands.argument("password", StringArgumentType.word())
+                    .then(Commands.argument("confirm", StringArgumentType.word())
                         .executes(context -> {
                             ServerPlayer player = context.getSource().getPlayer();
                             if (player == null) return 0;
                             UUID uuid = player.getUUID();
-                            String pass = net.minecraft.commands.arguments.StringArgumentType.getString(context, "password");
-                            String confirm = net.minecraft.commands.arguments.StringArgumentType.getString(context, "confirm");
+                            String pass = StringArgumentType.getString(context, "password");
+                            String confirm = StringArgumentType.getString(context, "confirm");
                             
                             if (authStates.get(uuid) != AuthState.WAITING_REGISTER) {
                                 player.sendSystemMessage(Component.literal("§c[系统] 你已经注册过了，请使用 /login 登录"));
@@ -184,12 +185,12 @@ public class LanLock implements ModInitializer {
                     context.getSource().sendFailure(Component.literal("§c用法: /login <密码>"));
                     return 0;
                 })
-                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgumentType.word())
+                .then(Commands.argument("password", StringArgumentType.word())
                     .executes(context -> {
                         ServerPlayer player = context.getSource().getPlayer();
                         if (player == null) return 0;
                         UUID uuid = player.getUUID();
-                        String pass = net.minecraft.commands.arguments.StringArgumentType.getString(context, "password");
+                        String pass = StringArgumentType.getString(context, "password");
                         
                         if (authStates.get(uuid) != AuthState.WAITING_LOGIN) {
                             player.sendSystemMessage(Component.literal("§c[系统] 你不需要登录"));
