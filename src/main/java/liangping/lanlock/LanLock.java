@@ -50,7 +50,7 @@ public class LanLock implements ModInitializer {
         ServerPlayConnectionEvents.DISCONNECT.register(this::onPlayerDisconnect);
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
         registerCommands();
-        registerInteractionBlocks();  // 新增：注册交互拦截
+        registerInteractionBlocks();
         
         LOGGER.info("[{}] 初始化完成", MOD_ID);
         
@@ -65,9 +65,7 @@ public class LanLock implements ModInitializer {
         });
     }
     
-    // 新增：拦截所有玩家交互
     private void registerInteractionBlocks() {
-        // 阻止攻击/挖掘实体
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
             if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
                 return InteractionResult.FAIL;
@@ -75,15 +73,13 @@ public class LanLock implements ModInitializer {
             return InteractionResult.PASS;
         });
         
-        // 阻止攻击/挖掘方块
         PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, entity) -> {
             if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
-                return false;  // 阻止破坏
+                return false;
             }
             return true;
         });
         
-        // 阻止使用物品/右键点击
         UseItemCallback.EVENT.register((player, world, hand) -> {
             if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
                 return InteractionResult.FAIL;
@@ -91,7 +87,6 @@ public class LanLock implements ModInitializer {
             return InteractionResult.PASS;
         });
         
-        // 阻止与方块交互（开门、按按钮等）
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
             if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
                 return InteractionResult.FAIL;
@@ -99,7 +94,6 @@ public class LanLock implements ModInitializer {
             return InteractionResult.PASS;
         });
         
-        // 阻止与实体交互（右键村民、动物等）
         UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
             if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
                 return InteractionResult.FAIL;
@@ -108,7 +102,6 @@ public class LanLock implements ModInitializer {
         });
     }
     
-    // 辅助方法：检查玩家是否已认证
     private boolean isAuthenticated(ServerPlayer player) {
         UUID uuid = player.getUUID();
         if (uuid.equals(hostPlayerUuid)) return true;
@@ -172,10 +165,9 @@ public class LanLock implements ModInitializer {
             AuthState state = authStates.getOrDefault(uuid, AuthState.AUTHENTICATED);
             
             if (state != AuthState.AUTHENTICATED && !uuid.equals(hostPlayerUuid)) {
-                // 冻结移动 + 添加缓慢效果（彻底阻止移动）
                 player.setDeltaMovement(0, 0, 0);
-                player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 40, 255, false, false, false));
-                player.addEffect(new MobEffectInstance(MobEffects.DIG_SLOWDOWN, 40, 255, false, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 40, 255, false, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE, 40, 255, false, false, false));
                 player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 40, 255, false, false, false));
                 
                 if (server.getTickCount() % 40 == 0) {
@@ -200,7 +192,6 @@ public class LanLock implements ModInitializer {
         }
     }
     
-    // ... registerCommands() 方法不变 ...
     private void registerCommands() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             
@@ -234,6 +225,11 @@ public class LanLock implements ModInitializer {
                             passwordManager.register(uuid, pass);
                             authStates.put(uuid, AuthState.AUTHENTICATED);
                             authenticatedPlayers.add(uuid);
+                            
+                            player.removeEffect(MobEffects.SLOWNESS);
+                            player.removeEffect(MobEffects.MINING_FATIGUE);
+                            player.removeEffect(MobEffects.WEAKNESS);
+                            
                             player.sendSystemMessage(Component.literal("§a[系统] 注册成功！欢迎加入！"));
                             LOGGER.info("玩家 {} 注册成功", player.getName().getString());
                             return 1;
@@ -261,6 +257,11 @@ public class LanLock implements ModInitializer {
                         if (passwordManager.verifyPassword(uuid, pass)) {
                             authStates.put(uuid, AuthState.AUTHENTICATED);
                             authenticatedPlayers.add(uuid);
+                            
+                            player.removeEffect(MobEffects.SLOWNESS);
+                            player.removeEffect(MobEffects.MINING_FATIGUE);
+                            player.removeEffect(MobEffects.WEAKNESS);
+                            
                             player.sendSystemMessage(Component.literal("§a[系统] 登录成功！欢迎回来！"));
                             LOGGER.info("玩家 {} 登录成功", player.getName().getString());
                             return 1;
