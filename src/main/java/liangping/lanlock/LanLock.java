@@ -7,7 +7,7 @@ import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.commands.arguments.IntegerArgument;
+import net.minecraft.commands.arguments.IntegerArgumentType;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -48,9 +48,8 @@ public class LanLock implements ModInitializer {
         
         LOGGER.info("[{}] 初始化完成", MOD_ID);
         
-        // 服务器就绪后向聊天发送消息
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
-            if (!readyMessageSent && server.getTickCount() > 20) {
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.LOAD.register((server, world) -> {
+            if (!readyMessageSent) {
                 Component msg = Component.literal("§a[LanLock] §f已就绪 | 密码验证 | 房主创造 | 禁用/give");
                 for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                     player.sendSystemMessage(msg);
@@ -147,14 +146,14 @@ public class LanLock implements ModInitializer {
                     context.getSource().sendFailure(Component.literal("§c用法: /register <密码> <确认密码>"));
                     return 0;
                 })
-                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgument.word())
-                    .then(Commands.argument("confirm", net.minecraft.commands.arguments.StringArgument.word())
+                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgumentType.word())
+                    .then(Commands.argument("confirm", net.minecraft.commands.arguments.StringArgumentType.word())
                         .executes(context -> {
                             ServerPlayer player = context.getSource().getPlayer();
                             if (player == null) return 0;
                             UUID uuid = player.getUUID();
-                            String pass = net.minecraft.commands.arguments.StringArgument.getString(context, "password");
-                            String confirm = net.minecraft.commands.arguments.StringArgument.getString(context, "confirm");
+                            String pass = net.minecraft.commands.arguments.StringArgumentType.getString(context, "password");
+                            String confirm = net.minecraft.commands.arguments.StringArgumentType.getString(context, "confirm");
                             
                             if (authStates.get(uuid) != AuthState.WAITING_REGISTER) {
                                 player.sendSystemMessage(Component.literal("§c[系统] 你已经注册过了，请使用 /login 登录"));
@@ -185,12 +184,12 @@ public class LanLock implements ModInitializer {
                     context.getSource().sendFailure(Component.literal("§c用法: /login <密码>"));
                     return 0;
                 })
-                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgument.word())
+                .then(Commands.argument("password", net.minecraft.commands.arguments.StringArgumentType.word())
                     .executes(context -> {
                         ServerPlayer player = context.getSource().getPlayer();
                         if (player == null) return 0;
                         UUID uuid = player.getUUID();
-                        String pass = net.minecraft.commands.arguments.StringArgument.getString(context, "password");
+                        String pass = net.minecraft.commands.arguments.StringArgumentType.getString(context, "password");
                         
                         if (authStates.get(uuid) != AuthState.WAITING_LOGIN) {
                             player.sendSystemMessage(Component.literal("§c[系统] 你不需要登录"));
@@ -221,7 +220,7 @@ public class LanLock implements ModInitializer {
                             context.getSource().sendFailure(Component.literal("§c[系统] /give 指令已被禁用！"));
                             return 0;
                         })
-                        .then(Commands.argument("count", IntegerArgument.integer(1))
+                        .then(Commands.argument("count", IntegerArgumentType.integer(1))
                             .executes(context -> {
                                 context.getSource().sendFailure(Component.literal("§c[系统] /give 指令已被禁用！"));
                                 return 0;
