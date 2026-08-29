@@ -1,6 +1,6 @@
 package liangping.lanlock;
 
-import net.fabricmc.api.DedicatedServerModInitializer;
+import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
-public class LanLock implements DedicatedServerModInitializer {
+public class LanLock implements ModInitializer {
     public static final String MOD_ID = "lanlock";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     
@@ -28,6 +28,7 @@ public class LanLock implements DedicatedServerModInitializer {
     private final Set<UUID> authenticatedPlayers = new HashSet<>();
     private final Set<UUID> warnedPlayers = new HashSet<>();
     private UUID hostPlayerUuid = null;
+    private boolean hostDetected = false;
     
     private enum AuthState {
         WAITING_REGISTER,
@@ -36,7 +37,7 @@ public class LanLock implements DedicatedServerModInitializer {
     }
 
     @Override
-    public void onInitializeServer() {
+    public void onInitialize() {
         LOGGER.info("[{}] v2.0 模组已加载", MOD_ID);
         
         ServerPlayConnectionEvents.JOIN.register(this::onPlayerJoin);
@@ -45,15 +46,25 @@ public class LanLock implements DedicatedServerModInitializer {
         registerCommands();
         
         LOGGER.info("[{}] 初始化完成", MOD_ID);
+        LOGGER.info("========================================");
+        LOGGER.info("[LanLock] 已就绪 - 等待玩家连接");
+        LOGGER.info("[LanLock] 功能: 密码验证 | 房主创造模式 | 禁用/give");
+        LOGGER.info("[LanLock] 单机局域网模式");
+        LOGGER.info("========================================");
     }
     
     private void onPlayerJoin(ServerGamePacketListenerImpl handler, PacketSender sender, MinecraftServer server) {
         ServerPlayer player = handler.getPlayer();
         UUID uuid = player.getUUID();
         
-        if (hostPlayerUuid == null && isLocalHost(player)) {
-            hostPlayerUuid = uuid;
-            LOGGER.info("检测到房主: {}", player.getName().getString());
+        // 检测房主：第一个加入的玩家（世界主人）
+        if (!hostDetected) {
+            // 延迟一tick检测，确保单人游戏主人先加入
+            if (server.getPlayerList().getPlayerCount() == 1 || isWorldOwner(player)) {
+                hostPlayerUuid = uuid;
+                hostDetected = true;
+                LOGGER.info("检测到房主: {} ({})", player.getName().getString(), uuid);
+            }
         }
         
         if (uuid.equals(hostPlayerUuid)) {
@@ -76,13 +87,24 @@ public class LanLock implements DedicatedServerModInitializer {
         }
     }
     
+    // 判断是否为世界主人（单机开局的玩家）
+    private boolean isWorldOwner(ServerPlayer player) {
+        // 方法1：检查是否是第一个玩家且IP为本地
+        String ip = player.getIpAddress();
+        return ip.equals("local") || ip.isEmpty() || ip.equals("127.0.0.1");
+    }
+    
     private void onPlayerDisconnect(ServerGamePacketListenerImpl handler, MinecraftServer server) {
         UUID uuid = handler.getPlayer().getUUID();
         authStates.remove(uuid);
         authenticatedPlayers.remove(uuid);
         warnedPlayers.remove(uuid);
+        
+        // 如果房主断开，重置房主检测（下次有人加入时重新检测）
         if (uuid.equals(hostPlayerUuid)) {
             hostPlayerUuid = null;
+            hostDetected = false;
+            LOGGER.info("房主已断开，重置房主检测");
         }
     }
     
@@ -228,10 +250,5 @@ public class LanLock implements DedicatedServerModInitializer {
                 )
             );
         });
-    }
-    
-    private boolean isLocalHost(ServerPlayer player) {
-        String ip = player.getIpAddress();
-        return ip.equals("127.0.0.1") || ip.equals("localhost") || ip.startsWith("192.168.") || ip.startsWith("10.");
     }
 }
