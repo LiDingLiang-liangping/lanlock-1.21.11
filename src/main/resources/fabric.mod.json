@@ -4,14 +4,12 @@
 	"version": "2.0.0",
 	"name": "LanLock",
 	"description": "局域网联机保护：房主独享创造模式，访客需密码验证，禁用/give指令",
-	"authors": [
-		"liangping"
-	],
+	"authors": ["liangping"],
 	"contact": {},
 	"license": "MIT",
-	"environment": "server",
+	"environment": "*",
 	"entrypoints": {
-		"server": [
+		"main": [
 			"liangping.lanlock.LanLock"
 		]
 	},
