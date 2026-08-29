@@ -29,7 +29,8 @@ public class LanLock implements ModInitializer {
     private final Set<UUID> warnedPlayers = new HashSet<>();
     private UUID hostPlayerUuid = null;
     private boolean hostDetected = false;
-    
+    private boolean readyMessageSent = false;
+
     private enum AuthState {
         WAITING_REGISTER,
         WAITING_LOGIN,
@@ -46,20 +47,24 @@ public class LanLock implements ModInitializer {
         registerCommands();
         
         LOGGER.info("[{}] 初始化完成", MOD_ID);
-        LOGGER.info("========================================");
-        LOGGER.info("[LanLock] 已就绪 - 等待玩家连接");
-        LOGGER.info("[LanLock] 功能: 密码验证 | 房主创造模式 | 禁用/give");
-        LOGGER.info("[LanLock] 单机局域网模式");
-        LOGGER.info("========================================");
+        
+        // 服务器就绪后向聊天发送消息
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (!readyMessageSent && server.getTickCount() > 20) {
+                Component msg = Component.literal("§a[LanLock] §f已就绪 | 密码验证 | 房主创造 | 禁用/give");
+                for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                    player.sendSystemMessage(msg);
+                }
+                readyMessageSent = true;
+            }
+        });
     }
     
     private void onPlayerJoin(ServerGamePacketListenerImpl handler, PacketSender sender, MinecraftServer server) {
         ServerPlayer player = handler.getPlayer();
         UUID uuid = player.getUUID();
         
-        // 检测房主：第一个加入的玩家（世界主人）
         if (!hostDetected) {
-            // 延迟一tick检测，确保单人游戏主人先加入
             if (server.getPlayerList().getPlayerCount() == 1 || isWorldOwner(player)) {
                 hostPlayerUuid = uuid;
                 hostDetected = true;
@@ -87,9 +92,7 @@ public class LanLock implements ModInitializer {
         }
     }
     
-    // 判断是否为世界主人（单机开局的玩家）
     private boolean isWorldOwner(ServerPlayer player) {
-        // 方法1：检查是否是第一个玩家且IP为本地
         String ip = player.getIpAddress();
         return ip.equals("local") || ip.isEmpty() || ip.equals("127.0.0.1");
     }
@@ -100,7 +103,6 @@ public class LanLock implements ModInitializer {
         authenticatedPlayers.remove(uuid);
         warnedPlayers.remove(uuid);
         
-        // 如果房主断开，重置房主检测（下次有人加入时重新检测）
         if (uuid.equals(hostPlayerUuid)) {
             hostPlayerUuid = null;
             hostDetected = false;
