@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.player.*;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.Commands;
@@ -14,6 +15,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.GameType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +50,7 @@ public class LanLock implements ModInitializer {
         ServerPlayConnectionEvents.DISCONNECT.register(this::onPlayerDisconnect);
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
         registerCommands();
+        registerInteractionBlocks();  // 新增：注册交互拦截
         
         LOGGER.info("[{}] 初始化完成", MOD_ID);
         
@@ -58,6 +63,57 @@ public class LanLock implements ModInitializer {
                 readyMessageSent = true;
             }
         });
+    }
+    
+    // 新增：拦截所有玩家交互
+    private void registerInteractionBlocks() {
+        // 阻止攻击/挖掘实体
+        AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+            if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
+                return InteractionResult.FAIL;
+            }
+            return InteractionResult.PASS;
+        });
+        
+        // 阻止攻击/挖掘方块
+        PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, entity) -> {
+            if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
+                return false;  // 阻止破坏
+            }
+            return true;
+        });
+        
+        // 阻止使用物品/右键点击
+        UseItemCallback.EVENT.register((player, world, hand) -> {
+            if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
+                return InteractionResult.FAIL;
+            }
+            return InteractionResult.PASS;
+        });
+        
+        // 阻止与方块交互（开门、按按钮等）
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
+                return InteractionResult.FAIL;
+            }
+            return InteractionResult.PASS;
+        });
+        
+        // 阻止与实体交互（右键村民、动物等）
+        UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+            if (player instanceof ServerPlayer serverPlayer && !isAuthenticated(serverPlayer)) {
+                return InteractionResult.FAIL;
+            }
+            return InteractionResult.PASS;
+        });
+    }
+    
+    // 辅助方法：检查玩家是否已认证
+    private boolean isAuthenticated(ServerPlayer player) {
+        UUID uuid = player.getUUID();
+        if (uuid.equals(hostPlayerUuid)) return true;
+        AuthState state = authStates.getOrDefault(uuid, AuthState.AUTHENTICATED);
+        return state == AuthState.AUTHENTICATED;
     }
     
     private void onPlayerJoin(ServerGamePacketListenerImpl handler, PacketSender sender, MinecraftServer server) {
@@ -116,7 +172,12 @@ public class LanLock implements ModInitializer {
             AuthState state = authStates.getOrDefault(uuid, AuthState.AUTHENTICATED);
             
             if (state != AuthState.AUTHENTICATED && !uuid.equals(hostPlayerUuid)) {
+                // 冻结移动 + 添加缓慢效果（彻底阻止移动）
                 player.setDeltaMovement(0, 0, 0);
+                player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 40, 255, false, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.DIG_SLOWDOWN, 40, 255, false, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 40, 255, false, false, false));
+                
                 if (server.getTickCount() % 40 == 0) {
                     if (state == AuthState.WAITING_REGISTER) {
                         player.sendSystemMessage(Component.literal("§c[系统] 请先注册：/register <密码> <确认密码>"));
@@ -139,6 +200,7 @@ public class LanLock implements ModInitializer {
         }
     }
     
+    // ... registerCommands() 方法不变 ...
     private void registerCommands() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             
